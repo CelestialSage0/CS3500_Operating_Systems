@@ -1,0 +1,30 @@
+Question 1:
+
+Files Modified:
+kernel/vm.c – added vmprint() and _vmprint() which is a helper function which follows recurssion from freewalk().
+kernel/defs.h – added prototype for vmprint().
+kernel/exec.c – inserted a call to vmprint() after the first user process is set up.
+
+Core Logic:
+The function traverses page table structure recursively in DFS manner, similar to freewalk(). For each valid entry, it prints the index, the raw PTE, and the physical address (PTE2PA). It can help us in debugging purposes and getting the page table for any particular process.
+
+Question 2:
+
+Files Modified:
+kernel/proc.h – added a struct usyscall *usyscall; pointer inside the process structure.
+kernel/proc.c – allocated page in allocproc(), freed in freeproc(), mapped in proc_pagetable(), unmapped in proc_freepagetable(); all similar to trapframe handles.
+
+Core Logic:
+Instead of trapping into the kernel for every getpid() call, we make a page in each process’s address space containing the PID. The userspace helper ugetpid() directly reads from this memory, avoiding a kernel trap and speeding up the call.
+
+Question 3:
+
+Files Modified:
+kernel/sysproc.c – implemented sys_pgaccess(), which takes base address, number of pages, and a user buffer to store results.
+kernel/riscv.h – defined #define PTE_A (1L << 6) for the accessed bit.
+user/user.h – added function prototype for pgaccess().
+user/usys.pl – added an entry for pgaccess.
+
+Core Logic:
+The syscall scans through page table entries for the given virtual address range. For each page, it checks if the accessed bit is set.If it is set, the corresponding bit in the "bitmask" is set. After that, the bit is cleared. Finally, the kernel copies the result back to the using copyout().
+

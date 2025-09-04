@@ -124,13 +124,22 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
-
+  
+  // Initializing Alarm interrupt variables
+   p->interval = 0;
+   p->curr_tick = 0;
+   p->pointer_to_handler = 0;
+   p->alarm = 0;
+   
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
     release(&p->lock);
     return 0;
   }
+
+  // Changed
+  p->alarm_trapframe = *(p->trapframe);
 
   // An empty user page table.
   p->pagetable = proc_pagetable(p);

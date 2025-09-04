@@ -104,6 +104,8 @@ extern uint64 sys_close(void);
 extern uint64 sys_trace(void);
 extern uint64 sys_trace(void);
 extern uint64 sys_trace(void);
+extern uint64 sys_sigalarm(void);
+extern uint64 sys_sigreturn(void);
 
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.

@@ -116,4 +116,31 @@ sys_trace(void)
 }
 
 // Added sys_sigalarm
+uint64
+sys_sigalarm(void)
+{
+  int ticks;
+  uint64 pointer;
 
+  argint(0, &ticks);
+  argaddr(1, &pointer);
+
+  myproc()->interval = ticks;
+  myproc()->curr_tick = 0;
+  myproc()->pointer_to_handler = (void(*)())pointer;
+  return 0;
+}
+
+// Added sys_sigreturn
+uint64
+sys_sigreturn(void)
+{
+  struct proc *p = myproc();
+  
+  uint64 saved = p->alarm_trapframe.a0;
+
+  *(p->trapframe) = p->alarm_trapframe;
+
+  p->alarm = 0;
+  return saved;
+} 

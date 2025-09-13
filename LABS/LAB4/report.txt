@@ -1,0 +1,17 @@
+Changes to files:
+	1. user/user.h - Declared sigalarm and sigreturn.
+	2. user/usys.pl - Added entries for sigalarm and sigreturn.
+	3. Makefile - Added alarmtest in UPROGS.
+	4. kernel/syscall.h - Defined numbers for both the syscalls.
+	5. kernel/syscall.c → Added both syscalls in syscalls array and added extern functions.
+	6. kernel/sysproc.c → Implemented sys_sigalarm() and sys_sigreturn().
+	7. kernel/proc.h → Added necessary fields in struct proc.
+	8. kernel/proc.c → Initialize new fields when process is created in allocproc.
+	9. kernel/trap.c - Implemented alarm interrupts.
+
+Explanations:
+1. sigalarm:
+The syscall stores the alarm interval, current tick, a trapframe, flag alarm and pointer to handler in the process structure. On each tick, the kernel increments a current tick. When current tick equals the interval, the current process state is saved using the stored trapframe, and execution is redirected to the handler and the flag alarm is set to true. The current tick is reset.
+
+2. sigreturn:
+The syscall restores the previously saved registers and program counter from the process structure, clears the “alarm” flag, and resumes execution exactly where the process was interrupted returning the a0 register which is the return value for functions. 

@@ -9,6 +9,10 @@
 #include "riscv.h"
 #include "defs.h"
 
+// Added here
+#define PA2IDX(pa) (((uint64)(pa) - KERNBASE) / PGSIZE)
+#define MAX_PAGES (PA2IDX(PHYSTOP))
+
 void freerange(void *pa_start, void *pa_end);
 
 extern char end[]; // first address after kernel.
@@ -23,11 +27,22 @@ struct {
   struct run *freelist;
 } kmem;
 
+// Added here
+struct {
+  struct spinlock lock;
+  int ref_count[MAX_PAGES];
+} ref;
+
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  initlock(&ref.lock, "ref");
   freerange(end, (void*)PHYSTOP);
+  // Initializing ref_count
+  for(int i = 0; i < MAX_PAGES; i++) {
+    ref.ref_count[i] = 0;
+  }
 }
 
 void
@@ -56,6 +71,9 @@ kfree(void *pa)
 
   r = (struct run*)pa;
 
+  // Added here
+  dec_ref((uint64)pa);
+
   acquire(&kmem.lock);
   r->next = kmem.freelist;
   kmem.freelist = r;
@@ -72,8 +90,13 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+  if(r){
     kmem.freelist = r->next;
+    // Added here
+    acquire(&ref.lock);
+    ref.ref_count[PA2IDX((uint64)r)] = 1;
+    release(&ref.lock);
+  }
   release(&kmem.lock);
 
   if(r)

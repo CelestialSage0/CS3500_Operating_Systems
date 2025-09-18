@@ -485,3 +485,62 @@ ismapped(pagetable_t pagetable, uint64 va)
   }
   return 0;
 }
+
+// Added here
+int
+break_cow(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte;
+  uint64 pa;
+  char *mem;
+
+  // get PTE for the page
+  pte = walk(pagetable, va, 0);
+  if(pte == 0)
+    return -1;
+  if(((*pte) & PTE_V) == 0)
+    return -1;
+
+  // must be a COW mapping to break
+  if(((*pte) & PTE_COW) == 0)
+    return -1;
+
+  pa = PTE2PA(*pte);
+
+  // allocate a new physical page
+  mem = kalloc();
+  if(mem == 0)
+    return -1;
+
+  // copy contents from old physical page -> new page
+  // NOTE: kernel's direct mapping might allow (char*)pa; if your xv6
+  // needs a pa->kva helper, replace (char*)pa with pa2kva(pa).
+  memmove(mem, (char*)pa, PGSIZE);
+
+  // decrease refcount of the old physical page (kfree will actually free only when ref==0)
+  // We call krefdec(pa) then kfree() only if dec returned 0; but our kfree() already
+  // decrements and only places on free list if refcount hits 0. So here we replace pte
+  // and then call kfree on the old pa (kfree uses refcount).
+  // But to avoid double-dec we just call krefdec(pa) here then set new pte and rely on
+  // existing kfree behavior in other code paths if needed.
+  // Safer sequence: update pte to new page then decrement refcount of old pa.
+  // Build new pte: PA to new mem plus original flags but with PTE_W and without PTE_COW.
+  uint64 newpa = (uint64)mem;
+  pte_t flags = PTE_FLAGS(*pte);
+  flags |= PTE_W;         // make writable for this process
+  flags &= ~PTE_COW;      // clear COW flag
+
+  // install new mapping
+  *pte = PA2PTE(newpa) | flags;
+
+  // flush TLB for this va
+  sfence_vma();
+
+  // decrement refcount for the old physical page; if it reaches zero, kfree should reclaim it.
+  // Use krefdec() which returns new refcount; if it becomes 0, call kfree((char*)pa).
+  if(krefdec(pa) == 0){
+    kfree((char*)pa);
+  }
+
+  return 0;
+}

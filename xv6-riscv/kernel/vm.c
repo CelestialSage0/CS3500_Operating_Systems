@@ -316,6 +316,7 @@ void uvmfree(pagetable_t pagetable, uint64 sz)
 // physical memory.
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
+// Modified uvmcopy() in vm.c for COW
 int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
@@ -332,19 +333,21 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
 
-    // If page is writable, mark it as COW and remove write permission
+    // If page is writable, make it COW and remove write permission
     if (flags & PTE_W)
     {
       flags = (flags & ~PTE_W) | PTE_COW;
-      *pte = PA2PTE(pa) | flags;
+      *pte = PA2PTE(pa) | flags; // Update parent PTE
     }
 
-    // Map the same physical page to child
+    // Map the same physical page in child
     if (mappages(new, i, PGSIZE, pa, flags) != 0)
+    {
       goto err;
+    }
 
-    // Increment reference count
-    krefinc((void *)pa);
+    // Increment reference count for shared page
+    inc_refcnt(pa);
   }
   return 0;
 
@@ -368,6 +371,45 @@ void uvmclear(pagetable_t pagetable, uint64 va)
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
+int cow_alloc(pagetable_t pagetable, uint64 va)
+{
+  if (va >= MAXVA)
+    return -1;
+
+  pte_t *pte = walk(pagetable, va, 0);
+  if (pte == 0)
+    return -1;
+
+  if ((*pte & PTE_V) == 0)
+    return -1;
+
+  if ((*pte & PTE_COW) == 0)
+    return -1; // Not a COW page
+
+  uint64 pa = PTE2PA(*pte);
+  uint flags = PTE_FLAGS(*pte);
+
+  // Allocate new page
+  char *mem = kalloc();
+  if (mem == 0)
+    return -1; // Out of memory
+
+  // Copy old page to new page
+  memmove(mem, (char *)pa, PGSIZE);
+
+  // Remove COW flag and add write permission
+  flags = (flags & ~PTE_COW) | PTE_W;
+
+  // Update PTE to point to new page
+  *pte = PA2PTE((uint64)mem) | flags;
+
+  // Decrement reference count of old page
+  kfree((void *)pa);
+
+  return 0;
+}
+
+// Modified copyout() in vm.c
 int copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
@@ -383,33 +425,26 @@ int copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
       return -1;
 
-    // Handle COW
-    if ((*pte & PTE_COW) && (*pte & PTE_W) == 0)
+    // Check if this is a COW page that needs copying
+    if (*pte & PTE_COW)
     {
-      uint64 pa = PTE2PA(*pte);
-      char *newpage = kalloc();
-      if (newpage == 0)
+      if (cow_alloc(pagetable, va0) < 0)
         return -1;
-
-      memmove(newpage, (char *)pa, PGSIZE);
-      uint flags = PTE_FLAGS(*pte);
-      *pte = PA2PTE((uint64)newpage) | (flags & ~PTE_COW) | PTE_W;
-
-      kfree((void *)pa); // decrement refcount if COW
+      pte = walk(pagetable, va0, 0); // Re-walk after cow_alloc
     }
+
+    if ((*pte & PTE_W) == 0)
+      return -1;
 
     pa0 = PTE2PA(*pte);
     n = PGSIZE - (dstva - va0);
     if (n > len)
       n = len;
-
     memmove((void *)(pa0 + (dstva - va0)), src, n);
-
-    printf("copyout: va %p len %d\n", dstva, n);
 
     len -= n;
     src += n;
-    dstva += n;
+    dstva = va0 + PGSIZE;
   }
   return 0;
 }

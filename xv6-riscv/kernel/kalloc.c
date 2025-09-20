@@ -23,20 +23,57 @@ struct
 {
   struct spinlock lock;
   struct run *freelist;
-  uint8 refcount[(PHYSTOP - KERNBASE) / PGSIZE]; // Reference count array
 } kmem;
 
-#define PA2INDEX(pa) (((uint64)pa - KERNBASE) / PGSIZE)
+// Reference counting structure for physical pages
+struct
+{
+  struct spinlock lock;
+  int refcnt[PHYSTOP / PGSIZE]; // Reference count array
+} pageref;
+
+// Initialize reference counting in kalloc.c
+void refcnt_init()
+{
+  initlock(&pageref.lock, "pageref");
+  int i;
+  for (i = 0; i < PHYSTOP / PGSIZE; i++)
+    pageref.refcnt[i] = 0;
+}
 
 void kinit()
 {
   initlock(&kmem.lock, "kmem");
-  // Initialize reference counts to 0
-  for (int i = 0; i < sizeof(kmem.refcount); i++)
-  {
-    kmem.refcount[i] = 0;
-  }
+  refcnt_init();
   freerange(end, (void *)PHYSTOP);
+}
+
+int get_refcnt(uint64 pa)
+{
+  if (pa >= PHYSTOP)
+    return 0;
+  return pageref.refcnt[pa / PGSIZE];
+}
+
+// Increment reference count
+void inc_refcnt(uint64 pa)
+{
+  if (pa >= PHYSTOP)
+    return;
+  acquire(&pageref.lock);
+  pageref.refcnt[pa / PGSIZE]++;
+  release(&pageref.lock);
+}
+
+// Decrement reference count and return new count
+int dec_refcnt(uint64 pa)
+{
+  if (pa >= PHYSTOP)
+    return 0;
+  acquire(&pageref.lock);
+  int cnt = --pageref.refcnt[pa / PGSIZE];
+  release(&pageref.lock);
+  return cnt;
 }
 
 void freerange(void *pa_start, void *pa_end)
@@ -44,9 +81,7 @@ void freerange(void *pa_start, void *pa_end)
   char *p;
   p = (char *)PGROUNDUP((uint64)pa_start);
   for (; p + PGSIZE <= (char *)pa_end; p += PGSIZE)
-  {
     kfree(p);
-  }
 }
 
 // Free the page of physical memory pointed at by pa,
@@ -60,24 +95,16 @@ void kfree(void *pa)
   if (((uint64)pa % PGSIZE) != 0 || (char *)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
-  acquire(&kmem.lock);
-  int index = PA2INDEX(pa);
-  if (kmem.refcount[index] > 1)
-  {
-    kmem.refcount[index]--;
-    release(&kmem.lock);
+  // Only free if reference count becomes 0
+  if (dec_refcnt((uint64)pa) > 0)
     return;
-  }
-
-  if (kmem.refcount[index] == 1)
-  {
-    kmem.refcount[index] = 0;
-  }
 
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
 
   r = (struct run *)pa;
+
+  acquire(&kmem.lock);
   r->next = kmem.freelist;
   kmem.freelist = r;
   release(&kmem.lock);
@@ -94,42 +121,16 @@ kalloc(void)
   acquire(&kmem.lock);
   r = kmem.freelist;
   if (r)
-  {
     kmem.freelist = r->next;
-    int index = PA2INDEX(r);
-    kmem.refcount[index] = 1; // Initialize refcount to 1
-  }
   release(&kmem.lock);
 
   if (r)
+  {
     memset((char *)r, 5, PGSIZE); // fill with junk
-  return (void *)r;
-}
-
-// Helper function to increment reference count
-void krefinc(void *pa)
-{
-  if ((uint64)pa % PGSIZE != 0 || (char *)pa < end || (uint64)pa >= PHYSTOP)
-    panic("krefinc");
-
-  acquire(&kmem.lock);
-  int index = PA2INDEX(pa);
-  if (kmem.refcount[index] < 255)
-  { // Prevent overflow
-    kmem.refcount[index]++;
+    // Initialize reference count to 1
+    acquire(&pageref.lock);
+    pageref.refcnt[((uint64)r) / PGSIZE] = 1;
+    release(&pageref.lock);
   }
-  release(&kmem.lock);
-}
-
-// Function to get reference count
-int krefcount(void *pa)
-{
-  if ((uint64)pa % PGSIZE != 0 || (char *)pa < end || (uint64)pa >= PHYSTOP)
-    return -1;
-
-  acquire(&kmem.lock);
-  int index = PA2INDEX(pa);
-  int count = kmem.refcount[index];
-  release(&kmem.lock);
-  return count;
+  return (void *)r;
 }

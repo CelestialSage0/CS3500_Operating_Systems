@@ -9,72 +9,75 @@
 #include "riscv.h"
 #include "defs.h"
 
-// Added here
-#define PA2IDX(pa) (((uint64)(pa) - KERNBASE) / PGSIZE)
-#define MAX_PAGES (PA2IDX(PHYSTOP))
-
 void freerange(void *pa_start, void *pa_end);
 
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
-struct run {
+struct run
+{
   struct run *next;
 };
 
-struct {
+struct
+{
   struct spinlock lock;
   struct run *freelist;
+  uint8 refcount[(PHYSTOP - KERNBASE) / PGSIZE]; // Reference count array
 } kmem;
 
-// Added here
-struct {
-  struct spinlock lock;
-  int ref_count[MAX_PAGES];
-} ref;
+#define PA2INDEX(pa) (((uint64)pa - KERNBASE) / PGSIZE)
 
-void
-kinit()
+void kinit()
 {
   initlock(&kmem.lock, "kmem");
-  initlock(&ref.lock, "ref");
-  freerange(end, (void*)PHYSTOP);
-  // Initializing ref_count
-  for(int i = 0; i < MAX_PAGES; i++) {
-    ref.ref_count[i] = 0;
+  // Initialize reference counts to 0
+  for (int i = 0; i < sizeof(kmem.refcount); i++)
+  {
+    kmem.refcount[i] = 0;
   }
+  freerange(end, (void *)PHYSTOP);
 }
 
-void
-freerange(void *pa_start, void *pa_end)
+void freerange(void *pa_start, void *pa_end)
 {
   char *p;
-  p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
+  p = (char *)PGROUNDUP((uint64)pa_start);
+  for (; p + PGSIZE <= (char *)pa_end; p += PGSIZE)
+  {
     kfree(p);
+  }
 }
 
 // Free the page of physical memory pointed at by pa,
 // which normally should have been returned by a
 // call to kalloc().  (The exception is when
 // initializing the allocator; see kinit above.)
-void
-kfree(void *pa)
+void kfree(void *pa)
 {
   struct run *r;
 
-  if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
+  if (((uint64)pa % PGSIZE) != 0 || (char *)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
+
+  acquire(&kmem.lock);
+  int index = PA2INDEX(pa);
+  if (kmem.refcount[index] > 1)
+  {
+    kmem.refcount[index]--;
+    release(&kmem.lock);
+    return;
+  }
+
+  if (kmem.refcount[index] == 1)
+  {
+    kmem.refcount[index] = 0;
+  }
 
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
 
-  r = (struct run*)pa;
-
-  // Added here
-  dec_ref((uint64)pa);
-
-  acquire(&kmem.lock);
+  r = (struct run *)pa;
   r->next = kmem.freelist;
   kmem.freelist = r;
   release(&kmem.lock);
@@ -90,16 +93,43 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r){
+  if (r)
+  {
     kmem.freelist = r->next;
-    // Added here
-    acquire(&ref.lock);
-    ref.ref_count[PA2IDX((uint64)r)] = 1;
-    release(&ref.lock);
+    int index = PA2INDEX(r);
+    kmem.refcount[index] = 1; // Initialize refcount to 1
   }
   release(&kmem.lock);
 
-  if(r)
-    memset((char*)r, 5, PGSIZE); // fill with junk
-  return (void*)r;
+  if (r)
+    memset((char *)r, 5, PGSIZE); // fill with junk
+  return (void *)r;
+}
+
+// Helper function to increment reference count
+void krefinc(void *pa)
+{
+  if ((uint64)pa % PGSIZE != 0 || (char *)pa < end || (uint64)pa >= PHYSTOP)
+    panic("krefinc");
+
+  acquire(&kmem.lock);
+  int index = PA2INDEX(pa);
+  if (kmem.refcount[index] < 255)
+  { // Prevent overflow
+    kmem.refcount[index]++;
+  }
+  release(&kmem.lock);
+}
+
+// Function to get reference count
+int krefcount(void *pa)
+{
+  if ((uint64)pa % PGSIZE != 0 || (char *)pa < end || (uint64)pa >= PHYSTOP)
+    return -1;
+
+  acquire(&kmem.lock);
+  int index = PA2INDEX(pa);
+  int count = kmem.refcount[index];
+  release(&kmem.lock);
+  return count;
 }

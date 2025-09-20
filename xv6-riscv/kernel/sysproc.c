@@ -43,15 +43,8 @@ sys_sbrk(void)
 
   argint(0, &n);
   addr = myproc()->sz;
-  if(n < 0) {
-    if(shrinkproc(-n) < 0)
-      return -1;
-  } else {
-    // Lazily allocate memory for this process: increase its memory
-    // size but don't allocate memory. If the processes uses the
-    // memory, vmfault() will allocate it.
-    myproc()->sz += n;
-  }
+  if(growproc(n) < 0)
+    return -1;
   return addr;
 }
 
@@ -64,10 +57,6 @@ sys_sleep(void)
   argint(0, &n);
   if(n < 0)
     n = 0;
-
-  // Adding backtrace
-  backtrace();
-
   acquire(&tickslock);
   ticks0 = ticks;
   while(ticks - ticks0 < n){
@@ -102,45 +91,3 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
-
-// Added sys_trace function
-uint64
-sys_trace(void)
-{
-  int mask;
-
-  argint(0, &mask);
-
-  myproc()->trace_mask = mask;
-  return 0;
-}
-
-// Added sys_sigalarm
-uint64
-sys_sigalarm(void)
-{
-  int ticks;
-  uint64 pointer;
-
-  argint(0, &ticks);
-  argaddr(1, &pointer);
-
-  myproc()->interval = ticks;
-  myproc()->curr_tick = 0;
-  myproc()->pointer_to_handler = (void(*)())pointer;
-  return 0;
-}
-
-// Added sys_sigreturn
-uint64
-sys_sigreturn(void)
-{
-  struct proc *p = myproc();
-  
-  uint64 saved = p->alarm_trapframe.a0;
-
-  *(p->trapframe) = p->alarm_trapframe;
-
-  p->alarm = 0;
-  return saved;
-} 

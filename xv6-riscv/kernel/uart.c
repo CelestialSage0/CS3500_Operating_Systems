@@ -13,7 +13,7 @@
 // the UART control registers are memory-mapped
 // at address UART0. this macro returns the
 // address of one of the registers.
-#define Reg(reg) ((volatile unsigned char *)(UART0 + (reg)))
+#define Reg(reg) ((volatile unsigned char *)(UART0 + reg))
 
 // the UART control registers.
 // some have different meanings for
@@ -45,7 +45,6 @@ char uart_tx_buf[UART_TX_BUF_SIZE];
 uint64 uart_tx_w; // write next to uart_tx_buf[uart_tx_w % UART_TX_BUF_SIZE]
 uint64 uart_tx_r; // read next from uart_tx_buf[uart_tx_r % UART_TX_BUF_SIZE]
 
-extern volatile int panicking; // from printf.c
 extern volatile int panicked; // from printf.c
 
 void uartstart();
@@ -87,8 +86,7 @@ uartinit(void)
 void
 uartputc(int c)
 {
-  if(panicking == 0)
-    acquire(&uart_tx_lock);
+  acquire(&uart_tx_lock);
 
   if(panicked){
     for(;;)
@@ -102,8 +100,7 @@ uartputc(int c)
   uart_tx_buf[uart_tx_w % UART_TX_BUF_SIZE] = c;
   uart_tx_w += 1;
   uartstart();
-  if(panicking == 0)
-    release(&uart_tx_lock);
+  release(&uart_tx_lock);
 }
 
 
@@ -114,8 +111,7 @@ uartputc(int c)
 void
 uartputc_sync(int c)
 {
-  if(panicking == 0)
-    push_off();
+  push_off();
 
   if(panicked){
     for(;;)
@@ -127,8 +123,7 @@ uartputc_sync(int c)
     ;
   WriteReg(THR, c);
 
-  if(panicking == 0)
-    pop_off();
+  pop_off();
 }
 
 // if the UART is idle, and a character is waiting
@@ -166,7 +161,7 @@ uartstart()
 int
 uartgetc(void)
 {
-  if(ReadReg(LSR) & LSR_RX_READY){
+  if(ReadReg(LSR) & 0x01){
     // input data is ready.
     return ReadReg(RHR);
   } else {
@@ -180,8 +175,6 @@ uartgetc(void)
 void
 uartintr(void)
 {
-  ReadReg(ISR); // acknowledge the interrupt
-
   // read and process incoming characters.
   while(1){
     int c = uartgetc();
@@ -191,9 +184,7 @@ uartintr(void)
   }
 
   // send buffered characters.
-  if(panicking == 0)
-    acquire(&uart_tx_lock);
+  acquire(&uart_tx_lock);
   uartstart();
-  if(panicking == 0)
-    release(&uart_tx_lock);
+  release(&uart_tx_lock);
 }

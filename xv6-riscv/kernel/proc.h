@@ -91,7 +91,6 @@ struct proc {
   int killed;                  // If non-zero, have been killed
   int xstate;                  // Exit status to be returned to parent's wait
   int pid;                     // Process ID
-  int trace_mask;              // trace_mask
 
   // wait_lock must be held when using this:
   struct proc *parent;         // Parent process
@@ -105,11 +104,4 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
-
-  // Timer interrupts
-  int interval;		       // Interval of the alarm
-  int curr_tick;	       // Current Tick
-  void (*pointer_to_handler)();
-  int alarm;	               // Flag to check whether we are in interrupt or not
-  struct trapframe alarm_trapframe; 
 };

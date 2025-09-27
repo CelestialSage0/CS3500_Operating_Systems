@@ -1,0 +1,23 @@
+Files Modified:- 
+
+1. kernel/riscv.h - Added PTE_COW flag definition using RSW bit.
+2. kernel/kalloc.c - Added reference counting system and modified memory allocation/deallocation.
+3. kernel/vm.c -  Modified uvmcopy(), added cow_alloc(), and updated copyout().
+4. kernel/trap.c - Enhanced usertrap() to handle COW page faults.
+
+Core Logic:-
+
+Reference Counting:
+Added a pageref structure which will store pages. Modified kinit() to initialize the reference counting. Updated kalloc() to set initial reference count to 1 for new pages, and kfree() to only free pages when reference count reaches zero.
+
+uvmcopy() Modification:
+Instead of allocating new pages and copying data during fork(), the function now maps the same physical pages in both parent and child processes. For originally writable pages, it marks them as COW using the PTE_COW flag and removes write permission. It increments the reference count for each shared page to track how many processes reference it.
+
+COW Page Fault Handler:
+Implemented cow_alloc() function that triggers when a process attempts to write to a COW page. It allocates a new physical page, copies the original data, updates the page table entry to point to the new page with write permission restored, and decrements the reference count of the original shared page.
+
+Trap Handling:
+Modified usertrap() to recognize page faults (scause 13 for load faults, scause 15 for store faults). For write faults on COW pages, it calls cow_alloc() to create a private copy. Non-COW page faults continue to kill the process as before.
+
+copyout() Modification:
+Updated copyout() to detect COW pages when the kernel needs to write to user memory. If a destination page is marked as COW, it triggers the COW allocation before proceeding with the copy operation.

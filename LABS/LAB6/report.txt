@@ -1,0 +1,23 @@
+Files Modified:-
+
+1. kernel/e1000.c – Completed NIC driver by implementing e1000_transmit() and e1000_recv() functions.
+
+Core Logic:-
+
+Transmit Path:
+Implemented e1000_transmit() to send Ethernet frames through the TX descriptor ring.
+- Checked if descriptor is free using DD bit.
+- Allocated new buffer and copied packet data.
+- Set descriptor fields (address, length, EOP, RS).
+- Updated transmit tail register to notify the NIC.
+- Freed the old and temporary buffers after transmission.
+
+Receive Path:
+Implemented e1000_recv() to handle incoming packets via RX descriptor ring.
+- Checked for descriptors marked done (DD bit).
+- Extracted buffer and packet length.
+- Allocated a fresh buffer to rearm the descriptor.
+- Passed received packet to the network stack using net_rx().
+- Handled special case for IP packets to prevent memory leaks by duplicating and freeing original buffer.
+
+This completes DMA-based send and receive integration between xv6 network stack and Intel E1000 NIC.
